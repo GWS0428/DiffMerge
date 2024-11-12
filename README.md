@@ -8,6 +8,8 @@
 > **Token Merging for Training-Free Semantic Binding in Text-to-Image Synthesis**
 >
 > [Taihang Hu](https://hutaihang.github.io), [Linxuan Li](https://github.com/Potato-lover), [Joost van de Weijer](http://lamp.cvc.uab.es/), [Hongcheng Gao](https://gao-hongcheng.github.io/), [Fahad Khan](https://sites.google.com/view/fahadkhans/home), [Jian Yang](https://scholar.google.com.hk/citations?user=6CIDtZQAAAAJ&hl=en), [Ming-Ming Cheng](https://mmcheng.net/), [Kai Wang](https://wangkai930418.github.io/), [Yaxing Wang](https://yaxingwang.netlify.app/author/yaxing-wang/)
+>
+> 📚[arXiv](https://arxiv.org/abs/2411.07132)
 
 This paper defines **semantic binding** as the task of associating an object with its attribute (attribute binding) or linking it to related sub-objects (object binding). We propose a novel method called **Token Merging (ToMe)**, which enhances semantic binding by aggregating relevant tokens into a single composite token, aligning the object, its attributes, and sub-objects in the same cross-attention map.
 
@@ -79,3 +81,14 @@ This project builds upon valuable work and resources from the following reposito
 - [🤗 Diffusers](https://github.com/huggingface/diffusers) 
 
 We extend our sincere thanks to the creators of these projects for their contributions to the field and for making their code available. 🙌
+
+## BibTeX
+```bibtex
+@inproceedings{hu2024token,
+  title={Token Merging for Training-Free Semantic Binding in Text-to-Image Synthesis},
+  author={Taihang Hu and Linxuan Li and Joost van de Weijer and Hongcheng Gao and Fahad Khan and Jian Yang and Ming-Ming Cheng and Kai Wang and Yaxing Wang},
+  booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
+  year={2024},
+  url={https://openreview.net/forum?id=tRRWoa9e80}
+}
+```
