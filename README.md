@@ -82,13 +82,3 @@ This project builds upon valuable work and resources from the following reposito
 
 We extend our sincere thanks to the creators of these projects for their contributions to the field and for making their code available. 🙌
 
-## BibTeX
-```bibtex
-@inproceedings{hu2024token,
-  title={Token Merging for Training-Free Semantic Binding in Text-to-Image Synthesis},
-  author={Taihang Hu and Linxuan Li and Joost van de Weijer and Hongcheng Gao and Fahad Khan and Jian Yang and Ming-Ming Cheng and Kai Wang and Yaxing Wang},
-  booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
-  year={2024},
-  url={https://openreview.net/forum?id=tRRWoa9e80}
-}
-```
