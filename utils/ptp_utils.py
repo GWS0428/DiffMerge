@@ -10,6 +10,7 @@ from torchvision import transforms as T
 
 from diffusers.models.attention import Attention
 
+
 def text_under_image(image: np.ndarray, text: str, text_color: Tuple[int, int, int] = (0, 0, 0)) -> np.ndarray:
     h, w, c = image.shape
     offset = int(h * .2)
@@ -134,6 +135,7 @@ def register_attention_control(model, controller):
     for name in model.unet.attn_processors.keys():
         if name not in attn_greenlist:
             attn_procs[name] = model.unet.attn_processors[name]
+            # print("This is not in greenlist", name)
             continue
         #     # if name.startswith('mid_block') and name.endswith("attn1.processor"):
         #     #     attn_procs[name] = CompactAttnProcessor(controller, 'mid')
@@ -158,6 +160,7 @@ def register_attention_control(model, controller):
         attn_procs[name] = AttendExciteCrossAttnProcessor(
             attnstore=controller, place_in_unet=place_in_unet
         )
+        # print("registering", name, place_in_unet)
 
     model.unet.set_attn_processor(attn_procs)
     controller.num_att_layers = cross_att_count
@@ -241,7 +244,8 @@ class AttentionStore(AttentionControl):
 
     def forward(self, attn, is_cross: bool, place_in_unet: str):
         key = f"{place_in_unet}_{'cross' if is_cross else 'self'}"
-        if attn.shape[1] <= 32 ** 2:  # avoid memory overhead
+        # NOTE(wsgwak): check this effect. Don't we need to store all the attention maps?
+        if attn.shape[1] <= 32 ** 2:  # avoid memory overhead 
             self.step_store[key].append(attn)
         return attn
 
@@ -303,180 +307,180 @@ def aggregate_attention(attention_store: AttentionStore,
     out = out.sum(0) / out.shape[0]
     return out
 
-def cal_threshold(img):
-    """
-    img: 1*h*w
-    """
-    img = img.detach().cpu().numpy().transpose(1,2,0)
-    img = (img * 255).astype(np.uint8)
-    # 先进行高斯滤波，再使用Otsu阈值法
-    blur = cv2.GaussianBlur(img, (5, 5), 0)
-    blur = blur.astype("uint8")
-    ret3, th3 = cv2.threshold(blur, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return th3
+# def cal_threshold(img):
+#     """
+#     img: 1*h*w
+#     """
+#     img = img.detach().cpu().numpy().transpose(1,2,0)
+#     img = (img * 255).astype(np.uint8)
+#     # 先进行高斯滤波，再使用Otsu阈值法
+#     blur = cv2.GaussianBlur(img, (5, 5), 0)
+#     blur = blur.astype("uint8")
+#     ret3, th3 = cv2.threshold(blur, 0, 1, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+#     return th3
 
-def get_crossMask(attention_store: AttentionStore,
-                    res: int,
-                    from_where: List[str],
-                    select: int,
-                    indices: List[int],
-                    save_name: str) -> torch.Tensor:
-    """get cross-attn mask"""
+# def get_crossMask(attention_store: AttentionStore,
+#                     res: int,
+#                     from_where: List[str],
+#                     select: int,
+#                     indices: List[int],
+#                     save_name: str) -> torch.Tensor:
+#     """get cross-attn mask"""
 
-    toImg = T.ToPILImage()
-    corss_attn_map = aggregate_attention(attention_store, res, from_where, True, select) #h w 77
+#     toImg = T.ToPILImage()
+#     corss_attn_map = aggregate_attention(attention_store, res, from_where, True, select) #h w 77
 
-    h, w, seq_len = corss_attn_map.shape
-    corss_attn_map = corss_attn_map.permute(2,0,1) #77 h w
-    amap_glo = np.zeros((h,w))
+#     h, w, seq_len = corss_attn_map.shape
+#     corss_attn_map = corss_attn_map.permute(2,0,1) #77 h w
+#     amap_glo = np.zeros((h,w))
 
-    for index in indices:
-        attn_map = corss_attn_map[index]
-        attn_map = (attn_map - attn_map.min())/(attn_map.max() - attn_map.min())
+#     for index in indices:
+#         attn_map = corss_attn_map[index]
+#         attn_map = (attn_map - attn_map.min())/(attn_map.max() - attn_map.min())
 
-        attn_map = attn_map**2
-        attn_map = (attn_map - attn_map.min())/(attn_map.max() - attn_map.min())
+#         attn_map = attn_map**2
+#         attn_map = (attn_map - attn_map.min())/(attn_map.max() - attn_map.min())
 
-        attn_map = attn_map**2
-        attn_map = (attn_map - attn_map.min())/(attn_map.max() - attn_map.min())
-
-
-        amap = attn_map.reshape(1,32,32).float()
-        # amap = amap/amap.sum()
-        amap = cal_threshold(amap)
-        amap_glo = amap_glo + amap.reshape(32,32)
-
-    mask = amap_glo
-    mask = torch.from_numpy(mask)
-    toImg(mask.reshape(1,h,w)).save(save_name)
-    mask = mask != 0 #bool tensor
-    attention_store.mask = mask    
+#         attn_map = attn_map**2
+#         attn_map = (attn_map - attn_map.min())/(attn_map.max() - attn_map.min())
 
 
+#         amap = attn_map.reshape(1,32,32).float()
+#         # amap = amap/amap.sum()
+#         amap = cal_threshold(amap)
+#         amap_glo = amap_glo + amap.reshape(32,32)
 
-def attn_refine(amap, coor_index = None):
-    """
-    amap: batch_size*head_nums h*w h*w
-    coor_index: (h*w), bool tensor
-    """
-    bh, tnum, res = amap.shape
-    grid_size = h = w = int(torch.sqrt(torch.tensor(res)))
+#     mask = amap_glo
+#     mask = torch.from_numpy(mask)
+#     toImg(mask.reshape(1,h,w)).save(save_name)
+#     mask = mask != 0 #bool tensor
+#     attention_store.mask = mask    
+
+
+
+# def attn_refine(amap, coor_index = None):
+#     """
+#     amap: batch_size*head_nums h*w h*w
+#     coor_index: (h*w), bool tensor
+#     """
+#     bh, tnum, res = amap.shape
+#     grid_size = h = w = int(torch.sqrt(torch.tensor(res)))
     
-    amap = amap[:,coor_index,:] # bh tnum res
-    bh, tnum, res = amap.shape
+#     amap = amap[:,coor_index,:] # bh tnum res
+#     bh, tnum, res = amap.shape
 
-    x = torch.arange(grid_size).float()
-    y = torch.arange(grid_size).float()
-    grid_x, grid_y = torch.meshgrid(x, y)
-    grid_xy = torch.stack((grid_x, grid_y), dim=2).cuda()  # shape: h*w*2
-    amap = amap.reshape(bh, tnum, h, w)
+#     x = torch.arange(grid_size).float()
+#     y = torch.arange(grid_size).float()
+#     grid_x, grid_y = torch.meshgrid(x, y)
+#     grid_xy = torch.stack((grid_x, grid_y), dim=2).cuda()  # shape: h*w*2
+#     amap = amap.reshape(bh, tnum, h, w)
 
-    # mu = torch.einsum('bijk,jkl->bil', amap, grid_xy) #shape: bh tnum 2
-    # mu = mu.reshape(bh,tnum,1,1,2)
+#     # mu = torch.einsum('bijk,jkl->bil', amap, grid_xy) #shape: bh tnum 2
+#     # mu = mu.reshape(bh,tnum,1,1,2)
 
-    mu = grid_xy.reshape(-1,2)[coor_index, :].reshape(1,tnum, 1,1,2)
-    # mu = torch.tensor([12.,20.]).reshape(1,1,1,1,1,2)
-    mu = mu.repeat(bh,1,1,1,1) #bh tmnm 1 1 2
-    xy_norm = grid_xy.view(1, 1, h, w, 2) - mu #shape: bh tnum h w 2
+#     mu = grid_xy.reshape(-1,2)[coor_index, :].reshape(1,tnum, 1,1,2)
+#     # mu = torch.tensor([12.,20.]).reshape(1,1,1,1,1,2)
+#     mu = mu.repeat(bh,1,1,1,1) #bh tmnm 1 1 2
+#     xy_norm = grid_xy.view(1, 1, h, w, 2) - mu #shape: bh tnum h w 2
 
-    xy_norm = xy_norm.reshape(-1,2,1)
-    xy_square = torch.bmm(xy_norm, xy_norm.permute(0,2,1)).reshape(bh, tnum, h, w, 2, 2) #bh, tnum, h, w,2,2
+#     xy_norm = xy_norm.reshape(-1,2,1)
+#     xy_square = torch.bmm(xy_norm, xy_norm.permute(0,2,1)).reshape(bh, tnum, h, w, 2, 2) #bh, tnum, h, w,2,2
     
-    sigma = torch.einsum('bijk,bijklm->bilm',amap, xy_square) #bh tnum 2 2
-    # sigma[:,:] = torch.tensor([[1,0.],[0,1.]]).cuda()
+#     sigma = torch.einsum('bijk,bijklm->bilm',amap, xy_square) #bh tnum 2 2
+#     # sigma[:,:] = torch.tensor([[1,0.],[0,1.]]).cuda()
 
-    inv_sigma = torch.linalg.inv(sigma) #bh tnum 2 2
-    inv_sigma = inv_sigma.reshape(bh, tnum, 1, 1, 2, 2)
-    inv_sigma = inv_sigma.repeat(1, 1, h, w, 1, 1) #bh tnum h w 2 2
+#     inv_sigma = torch.linalg.inv(sigma) #bh tnum 2 2
+#     inv_sigma = inv_sigma.reshape(bh, tnum, 1, 1, 2, 2)
+#     inv_sigma = inv_sigma.repeat(1, 1, h, w, 1, 1) #bh tnum h w 2 2
     
-    dis = torch.bmm(xy_norm.permute(0,2,1), inv_sigma.reshape(-1,2,2)) #-1 1 2
-    dis = torch.bmm(dis, xy_norm).reshape(bh,tnum,h,w) #bh, tnum, h, w
+#     dis = torch.bmm(xy_norm.permute(0,2,1), inv_sigma.reshape(-1,2,2)) #-1 1 2
+#     dis = torch.bmm(dis, xy_norm).reshape(bh,tnum,h,w) #bh, tnum, h, w
 
-    dis = torch.sqrt(dis) #bh tnum h w
+#     dis = torch.sqrt(dis) #bh tnum h w
 
-    dis2 = (dis - dis.amin(dim = (-2,-1), keepdim = True)) / (dis.amax(dim = (-2,-1), keepdim = True) - dis.amin(dim = (-2,-1), keepdim = True))
-    dis2 = torch.exp(-dis2/0.5) # bh tnum h w
+#     dis2 = (dis - dis.amin(dim = (-2,-1), keepdim = True)) / (dis.amax(dim = (-2,-1), keepdim = True) - dis.amin(dim = (-2,-1), keepdim = True))
+#     dis2 = torch.exp(-dis2/0.5) # bh tnum h w
     
-    amap = amap * dis2
-    amap = (amap - amap.amin(dim = (-2,-1), keepdim = True))/(amap.amax(dim = (-2,-1), keepdim = True) - amap.amin(dim = (-2,-1), keepdim = True))
-    # amap = amap**1.5
+#     amap = amap * dis2
+#     amap = (amap - amap.amin(dim = (-2,-1), keepdim = True))/(amap.amax(dim = (-2,-1), keepdim = True) - amap.amin(dim = (-2,-1), keepdim = True))
+#     # amap = amap**1.5
 
-    amap = amap/amap.sum(dim = (-2,-1), keepdim=True)
+#     amap = amap/amap.sum(dim = (-2,-1), keepdim=True)
     
-    return amap.reshape(bh,tnum,h*w)
+#     return amap.reshape(bh,tnum,h*w)
 
 
-class CompactAttnProcessor:
+# class CompactAttnProcessor:
 
-    def __init__(self, attnstore, place_in_unet):
-        super().__init__()
-        self.attnstore = attnstore
-        self.place_in_unet = place_in_unet
+#     def __init__(self, attnstore, place_in_unet):
+#         super().__init__()
+#         self.attnstore = attnstore
+#         self.place_in_unet = place_in_unet
 
-    def __call__(self, attn: Attention,hidden_states: torch.FloatTensor,encoder_hidden_states = None,
-                    attention_mask = None,temb = None,scale: float = 1.0,) -> torch.Tensor:
-        residual = hidden_states
-        is_cross = encoder_hidden_states is not None
+#     def __call__(self, attn: Attention,hidden_states: torch.FloatTensor,encoder_hidden_states = None,
+#                     attention_mask = None,temb = None,scale: float = 1.0,) -> torch.Tensor:
+#         residual = hidden_states
+#         is_cross = encoder_hidden_states is not None
 
-        args = (scale,)
+#         args = (scale,)
 
-        if attn.spatial_norm is not None:
-            hidden_states = attn.spatial_norm(hidden_states, temb)
+#         if attn.spatial_norm is not None:
+#             hidden_states = attn.spatial_norm(hidden_states, temb)
 
-        input_ndim = hidden_states.ndim
+#         input_ndim = hidden_states.ndim
 
-        if input_ndim == 4:
-            batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+#         if input_ndim == 4:
+#             batch_size, channel, height, width = hidden_states.shape
+#             hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
-        batch_size, sequence_length, _ = (
-            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-        )
-        attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+#         batch_size, sequence_length, _ = (
+#             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
+#         )
+#         attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
 
-        if attn.group_norm is not None:
-            hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
+#         if attn.group_norm is not None:
+#             hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
-        query = attn.to_q(hidden_states, *args)
+#         query = attn.to_q(hidden_states, *args)
 
-        if encoder_hidden_states is None:
-            encoder_hidden_states = hidden_states
-        elif attn.norm_cross:
-            encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
+#         if encoder_hidden_states is None:
+#             encoder_hidden_states = hidden_states
+#         elif attn.norm_cross:
+#             encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 
-        key = attn.to_k(encoder_hidden_states, *args)
-        value = attn.to_v(encoder_hidden_states, *args)
+#         key = attn.to_k(encoder_hidden_states, *args)
+#         value = attn.to_v(encoder_hidden_states, *args)
 
-        if attn.eot is not None:
-            value2 = attn.to_v(attn.eot, *args)
-            # print(value2.shape, value.shape)
-            value[1][8:] = value2[0][8:]
+#         if attn.eot is not None:
+#             value2 = attn.to_v(attn.eot, *args)
+#             # print(value2.shape, value.shape)
+#             value[1][8:] = value2[0][8:]
 
-        query = attn.head_to_batch_dim(query)
-        key = attn.head_to_batch_dim(key)
-        value = attn.head_to_batch_dim(value)
+#         query = attn.head_to_batch_dim(query)
+#         key = attn.head_to_batch_dim(key)
+#         value = attn.head_to_batch_dim(value)
 
-        attention_probs = attn.get_attention_scores(query, key, attention_mask)
+#         attention_probs = attn.get_attention_scores(query, key, attention_mask)
         
 
 
-        hidden_states = torch.bmm(attention_probs, value)
-        hidden_states = attn.batch_to_head_dim(hidden_states)
+#         hidden_states = torch.bmm(attention_probs, value)
+#         hidden_states = attn.batch_to_head_dim(hidden_states)
 
-        # linear proj
-        hidden_states = attn.to_out[0](hidden_states, *args)
-        # dropout
-        hidden_states = attn.to_out[1](hidden_states)
+#         # linear proj
+#         hidden_states = attn.to_out[0](hidden_states, *args)
+#         # dropout
+#         hidden_states = attn.to_out[1](hidden_states)
 
-        if input_ndim == 4:
-            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+#         if input_ndim == 4:
+#             hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
-        if attn.residual_connection:
-            hidden_states = hidden_states + residual
+#         if attn.residual_connection:
+#             hidden_states = hidden_states + residual
 
-        hidden_states = hidden_states / attn.rescale_output_factor
+#         hidden_states = hidden_states / attn.rescale_output_factor
 
-        return hidden_states
+#         return hidden_states
 
 def register_self_time(pipe, i):
     for name, module in pipe.unet.named_modules():
@@ -486,6 +490,6 @@ def register_self_time(pipe, i):
         # if name.startswith("down_blocks.2") and name.endswith("attn1"):
             setattr(module, 'time', i)
 
-def register_self_eot(pipe, eot):
-    for name, module in pipe.unet.named_modules():
-        setattr(module, 'eot', eot)
+# def register_self_eot(pipe, eot):
+#     for name, module in pipe.unet.named_modules():
+#         setattr(module, 'eot', eot)
