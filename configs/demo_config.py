@@ -79,6 +79,8 @@ class RunConfig1:
 
 @dataclass
 class RunConfig2:
+    # inversion image
+    img_path: str = str(Path(__file__).parent.parent / "pics" / "demo_standard.png")
     # Guiding text prompt
     prompt: str = "a white cat and a black dog"
     # stable diffusion model path,set to None means sdxl model will be downloaded automatically

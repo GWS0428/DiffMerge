@@ -520,6 +520,7 @@ class tomePipeline(StableDiffusionXLPipeline):
             )
 
         attention_store = kwargs.get("attention_store")
+        attn_procs = kwargs.get("attn_procs") # added
         indices_to_alter = kwargs.get("indices_to_alter")
         attention_res = kwargs.get("attention_res")
         run_standard_sd = kwargs.get("run_standard_sd")
@@ -665,8 +666,8 @@ class tomePipeline(StableDiffusionXLPipeline):
             self.scheduler, num_inference_steps, device, timesteps
         )
 
-        # 5. Prepare latent variables # updated for FPE
-        # NOTE(wsgwak): Now, the inverted image latents are provided as input.
+        # 5. Prepare latent variables 
+        # UPDATED(wsgwak): the inverted image latents are provided as input for FPE.
         num_channels_latents = self.unet.config.in_channels
         if latents == None:
             raise ValueError(
@@ -694,6 +695,7 @@ class tomePipeline(StableDiffusionXLPipeline):
         # )
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+        # TODO(wsgwak): Move this part to outside and use it in opt_token for consistency
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # 7. Prepare added time ids & embeddings
@@ -721,6 +723,8 @@ class tomePipeline(StableDiffusionXLPipeline):
         else:
             negative_add_time_ids = add_time_ids
 
+        # NOTE(wsgwak): CFG batching point for text prompts & added_cond_kwargs
+        # No repeat for panchors, prompt_anchor3
         if self.do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
             add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
@@ -743,6 +747,7 @@ class tomePipeline(StableDiffusionXLPipeline):
         # 8. Denoising loop
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
+        # NOTE(wsgwak): remove later
         # 8.1 Apply denoising_end
         if (
             self.denoising_end is not None
@@ -762,7 +767,8 @@ class tomePipeline(StableDiffusionXLPipeline):
             timesteps = timesteps[:num_inference_steps]
 
         # 9. Optionally get Guidance Scale Embedding
-        # NOTE(wsgwak): typically None. Remove later
+        # NOTE(wsgwak): SDXL : time_cond_proj_dim = 256
+        # NOTE(wsgwak): check the effect of this arg
         timestep_cond = None
         if self.unet.config.time_cond_proj_dim is not None:
             guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(
@@ -785,12 +791,13 @@ class tomePipeline(StableDiffusionXLPipeline):
         if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
             added_cond_kwargs["image_embeds"] = image_embeds
 
-        # NOTE(wsgwak): check if dim is right
-        add_text_embeds_half = add_text_embeds.shape[0] // 2
-        add_time_ids_half = add_time_ids.shape[0] // 2
-        added_cond_kwargs2 = {"text_embeds": torch.zeros_like(add_text_embeds[add_text_embeds_half:]), "time_ids": add_time_ids[add_time_ids_half:]}
+        # added_cond_kwargs2 = {"text_embeds": add_text_embeds[1:], "time_ids": add_time_ids[1:]}
 
-        # NOTE(wsgwak): remove later. not used
+        added_cond_kwargs2 = {
+            "text_embeds": torch.zeros_like(add_text_embeds[1:]),
+            "time_ids": add_time_ids[1:],
+        }
+        
         self.added_cond_kwargs2 = added_cond_kwargs2
         self.negative_prompt_embeds = negative_prompt_embeds
         self.pos = None
@@ -807,7 +814,7 @@ class tomePipeline(StableDiffusionXLPipeline):
             for i, t in enumerate(timesteps):
                 register_self_time(self, None)
                 
-                # updated : FPE 
+                # UPDATED(wsgwak): FPE 
                 if ref_intermediate_latents is not None:
                     # note that the batch_size >= 2
                     latents_ref = ref_intermediate_latents[-1 - i]
@@ -817,6 +824,7 @@ class tomePipeline(StableDiffusionXLPipeline):
                     raise ValueError("ref_intermediate_latents must be provided.")
 
                 # expand the latents if we are doing classifier free guidance
+                # NOTE(wsgwak): CFG batching point for image latents
                 latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
                 latent_anchor = torch.cat([latents] * len(panchors)) if latent_anchor is None else latent_anchor
                 # NOTE(wsgwak): The 0-dim of latents = 2!!!
@@ -824,14 +832,21 @@ class tomePipeline(StableDiffusionXLPipeline):
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 latent_anchor = self.scheduler.scale_model_input(latent_anchor, t)
 
-                # latents_up = (latent_model_input[1:].clone().detach())  # .requires_grad_(True)
-                latents_up = (latent_model_input[latent_model_input.shape[0] // 2:].clone().detach())  # .requires_grad_(True)
+                latents_up = (latent_model_input[1:].clone().detach())  # .requires_grad_(True)
+                # latents_up = (latent_model_input[latent_model_input.shape[0] // 2:].clone().detach())  # .requires_grad_(True)
 
                 prompt_embeds2 = (prompt_embeds if prompt_embeds2 is None else prompt_embeds2)
 
+                # UPDATE(wsgwak): disable FPE logic during TOME
+                # NOTE(wsgwak): find a way to enable FPE logic during TOME
+                # Currently, it raises gradient error if we enable FPE logic.
+                for proc in attn_procs:
+                    proc.set_custom_param(False)
+                        
                 with torch.enable_grad():
                     if not run_standard_sd: # NOTE(wsgwak): check this option
                         token_control, attention_control = tome_control_steps # NOTE(wsgwak): check this option
+                        
                         # EOT replace
                         if i == eot_replace_step:
                             prompt_embeds2[1, prompt_length + 1 :] = prompt_anchor3[0][prompt_length + 1 :]
@@ -845,8 +860,15 @@ class tomePipeline(StableDiffusionXLPipeline):
                                     .clone()
                                 )
                                 # NOTE(wsgwak): Check if opt_token should use fixed attn map
-                                stoken, latent_anchor[idx * 2 - 1] = self.opt_token( # NOTE(wsgwak): Check which one is right. (source/target latent)
-                                    latent_anchor[idx * 2 - 1],
+                                # stoken, latent_anchor[idx * 2 - 1] = self.opt_token( # NOTE(wsgwak): Check which one is right. (source/target latent)
+                                #     latent_anchor[idx * 2 - 1],
+                                #     t,
+                                #     stoken,
+                                #     panchor,
+                                #     token_refinement_steps,
+                                # )
+                                stoken, latent_anchor[idx] = self.opt_token(
+                                    latent_anchor[idx],
                                     t,
                                     stoken,
                                     panchor,
@@ -873,16 +895,26 @@ class tomePipeline(StableDiffusionXLPipeline):
 
                             print(f"Iteration {i} | Loss: {loss:0.4f}")
 
+                # UPDATE(wsgwak): enable FPE logic
+                for proc in attn_procs:
+                    proc.set_custom_param(True)
+                
+                # NOTE(wsgwak): REAL CFG batchching point for image latents after opt
                 latent_model_input = (
                     torch.cat([latents_up] * 2)
                     if self.do_classifier_free_guidance
                     else latents_up
                 )
+                
+                # UPDATED(wsgwak): FPE
+                negative_prompt_embeds_FPE = torch.cat([negative_prompt_embeds] * 2) if self.do_classifier_free_guidance else negative_prompt_embeds
+                prompt_embeds2_FPE = torch.cat([negative_prompt_embeds_FPE, prompt_embeds2], dim=0)
+                latent_model_input_FPE = torch.cat([latent_model_input] * 2) if self.do_classifier_free_guidance else latent_model_input
                 # predict the noise residual
                 noise_pred = self.unet(
-                    latent_model_input,
+                    latent_model_input_FPE,
                     t,
-                    encoder_hidden_states=prompt_embeds2,
+                    encoder_hidden_states=prompt_embeds2_FPE,
                     timestep_cond=timestep_cond,
                     cross_attention_kwargs=self.cross_attention_kwargs,
                     added_cond_kwargs=added_cond_kwargs,

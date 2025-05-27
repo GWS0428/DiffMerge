@@ -15,7 +15,7 @@ from prompt_utils import PromptParser
 import spacy
 import pickle
 
-from diffusers import DDIMScheduler
+from diffusers import DDIMScheduler, UNet2DConditionModel
 from torchvision.io import read_image
 
 import warnings
@@ -167,16 +167,12 @@ def run_on_prompt(
     prompts: List[str],
     model: tomePipeline,
     tome_attn_store: AttentionStore,
+    attn_procs: List[CombinedAttentionProcessor],
     token_indices: List[int],
     prompt_anchor: List[str],
     seed: torch.Generator,
     config,
 ) -> Image.Image:
-    # if controller is not None:
-    #     ptp_utils.register_attention_control(model, controller)
-        
-    # print(prompts)
-    # exit()
     
     outputs = model(
         latents=start_code, # added
@@ -186,6 +182,7 @@ def run_on_prompt(
         generator=seed,
         num_inference_steps=config.n_inference_steps,
         attention_store=tome_attn_store,
+        attn_procs=attn_procs,
         indices_to_alter=token_indices,
         prompt_anchor=prompt_anchor,
         attention_res=config.attention_res,
@@ -221,6 +218,19 @@ def main(args):
     config = RunConfig2() #edit this to change the config
     device = "cuda" if torch.cuda.is_available() else "cpu"
     stable, prompt_parser = load_model(config, device)
+    
+    # --- monkey patch for FPE ---
+    def custom_forward(self, *args, adopt_self_attn=None, **kwargs):
+        print(f"Custom param is added into unet: {adopt_self_attn}")
+        self.adopt_self_attn = adopt_self_attn
+        return original_forward(self, *args, **kwargs)
+
+    # Store original
+    original_forward = stable.unet.forward
+
+    # Patch
+    stable.unet.forward = custom_forward.__get__(stable.unet, UNet2DConditionModel)
+        
     # ------------------parser prompt-------------------------
     if config.use_nlp:
         import en_core_web_trf
@@ -254,12 +264,12 @@ def main(args):
     scheduler_type = Scheduler_Type.DDIM
     pipe_inversion, pipe_inference = get_pipes(model_type, scheduler_type, device=device)
     inv_config = RunConfig(model_type = model_type,
-                        num_inference_steps = 50,
+                        num_inference_steps = 50, # NOTE(wsgwak): Change it to args.
                         num_inversion_steps = 50,
                         # num_renoise_steps = 1,
                         scheduler_type = scheduler_type,
                         perform_noise_correction = False,
-                        seed = 7865,
+                        seed = 7865, # NOTE(wsgwak): Update the seed for consistency
                         guidance_scale = 7.5,) # NOTE(wsgwak): Check if 0.0 works better
 
     if args.test:
@@ -291,10 +301,6 @@ def main(args):
     target_prompt = config.prompt
     prompts = [source_prompt, target_prompt]
     start_code = start_code.expand(len(prompts), -1, -1, -1)
-    # print(start_code.shape)
-    # exit()
-    # controller = SelfAttentionControlEdit(prompts, NUM_DIFFUSION_STEPS, self_replace_steps=self_replace_steps)
-    # register_attention_control_new(stable, controller)
 
     images = []
     for seed in config.seeds:
@@ -302,11 +308,12 @@ def main(args):
         print(f"Original Prompt: {config.prompt}")
         print(f"Anchor Prompt: {prompt_anchor}")
         print(f"Indices of merged tokens: {token_indices}")
-        g = torch.Generator("cuda").manual_seed(seed)
+        # NOTE(wsgwak): Check it Scheduler should get g. Otherwise the internal copy don't need g.
+        g = torch.Generator("cuda").manual_seed(seed) 
         
         tome_controller = AttentionStore() # ToMe controller 
         self_attn_controller = SelfAttentionControlEdit(prompts, NUM_DIFFUSION_STEPS, self_replace_steps=self_replace_steps)
-        register_attention_control_combined(
+        attn_procs, total_hooked_layers = register_attention_control_combined(
             stable,
             tome_controller,
             self_attn_controller,
@@ -319,6 +326,7 @@ def main(args):
             prompts=prompts,
             model=stable,
             tome_attn_store=tome_controller,
+            attn_procs=attn_procs,
             token_indices=token_indices,
             prompt_anchor=prompt_anchor,
             seed=g,

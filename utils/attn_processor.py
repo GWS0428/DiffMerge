@@ -9,14 +9,19 @@ from typing import List, Dict, Any
 # and potentially AttentionControl base class are available for import from your project's utils file(s)
 # e.g., from utils.ptp_utils import AttentionStore, AttendExciteCrossAttnProcessor, SelfAttentionControlEdit
 
+
 # Define the CombinedAttentionProcessor
 class CombinedAttentionProcessor(nn.Module):
     def __init__(self, tome_controller, self_attn_controller, place_in_unet, tome_control_point):
         super().__init__()
+        self.adopt_self_attn = False  # This will be dynamically updated
         self.tome_controller = tome_controller
         self.self_attn_controller = self_attn_controller
         self.place_in_unet = place_in_unet
         self.tome_control_point = tome_control_point
+        
+    def set_custom_param(self, value):
+        self.adopt_self_attn = value
 
     def __call__(self, attn: Attention, hidden_states: torch.FloatTensor, encoder_hidden_states=None,
                     attention_mask = None,temb = None,scale: float = 1.0,) -> torch.Tensor:
@@ -59,7 +64,8 @@ class CombinedAttentionProcessor(nn.Module):
         attention_probs = attn.get_attention_scores(query, key, attention_mask)
         
         # FIXME(wsgwak): Add a logic to avoid graident error at this point
-        # attn_edited = self.self_attn_controller(attention_probs, is_cross, self.place_in_unet)
+        if self.adopt_self_attn:
+            attention_probs = self.self_attn_controller(attention_probs, is_cross, self.place_in_unet)
         if self.tome_control_point:
             self.tome_controller(attention_probs, is_cross, self.place_in_unet) 
         # self.attnstore(attention_probs, is_cross, self.place_in_unet)
@@ -122,3 +128,5 @@ def register_attention_control_combined(model, tome_controller, self_attn_contro
 
     tome_controller.num_att_layers = total_hooked_layers
     self_attn_controller.num_att_layers = total_hooked_layers
+    
+    return attn_procs, total_hooked_layers
