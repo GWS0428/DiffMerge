@@ -1,3 +1,4 @@
+import os
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 
@@ -23,6 +24,7 @@ from diffusers.pipelines.stable_diffusion_xl import StableDiffusionXLPipeline
 
 from utils.ptp_utils import AttentionStore, aggregate_attention, register_self_time
 from torchvision import transforms as T
+from torchvision.utils import save_image
 
 
 logger = logging.get_logger(__name__)
@@ -735,8 +737,9 @@ class tomePipeline(StableDiffusionXLPipeline):
         if self.do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0) # [2, ...] 
             if self.use_fpe:
-                add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds] * 2, dim=0) # [4, ...]
-                add_time_ids = torch.cat([negative_add_time_ids, add_time_ids] * 2, dim=0) # [4, ...]
+                # NOTE(wsgwak): the first 3 elements should be negative, last 1 element should be positive one.
+                add_text_embeds = torch.cat([negative_pooled_prompt_embeds, negative_pooled_prompt_embeds, negative_pooled_prompt_embeds, add_text_embeds], dim=0) # [4, ...]
+                add_time_ids = torch.cat([negative_add_time_ids, negative_add_time_ids, negative_add_time_ids, add_time_ids], dim=0) # [4, ...]
             else:
                 add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0) # [2, ...]
                 add_time_ids = torch.cat([negative_add_time_ids, add_time_ids], dim=0) # [2, ...]
@@ -831,7 +834,6 @@ class tomePipeline(StableDiffusionXLPipeline):
                     if ref_intermediate_latents is not None:
                         # note that the batch_size >= 2 <- NOTE(wsgwak): not true in FPE
                         latents_ref = ref_intermediate_latents[-1 - i]
-                        # latents_ref = ref_intermediate_latents[i]
                         if i == 0:
                             if latents.shape[0] != 1:
                                 raise ValueError("fist latents must be of shape [1, C, H, W] for FPE.")
@@ -841,11 +843,14 @@ class tomePipeline(StableDiffusionXLPipeline):
                         latents = torch.cat([latents_ref, latents_cur])
                     else:
                         raise ValueError("ref_intermediate_latents must be provided.")
+                # if i == 0:
+                #     latents = torch.cat([latents] * 2)
 
                 # expand the latents if we are doing classifier free guidance
                 # NOTE(wsgwak): CFG batching point for image latents
                 # NOTE(wsgwal): latents is FPE-batched at this point!!! [2, ...]
                 latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents # [4, ...] if use_fpe else [2, ...]
+                # latent_model_input = torch.cat()
                 if self.use_fpe:
                     latent_anchor = torch.cat([latents[-1:]] * len(panchors)) if latent_anchor is None else latent_anchor # []
                 else:
@@ -857,6 +862,7 @@ class tomePipeline(StableDiffusionXLPipeline):
                 # UPDATED(wsgwak): use  for FPE
                 # latents_up = (latent_model_input[1:].clone().detach())  # .requires_grad_(True)
                 latents_up = (latent_model_input[-1:].clone().detach())  # .requires_grad_(True)
+                # latents_up = (latent_model_input[-2:].clone().detach())  # .requires_grad_(True)
 
                 prompt_embeds2 = (prompt_embeds if prompt_embeds2 is None else prompt_embeds2)
 
@@ -925,16 +931,18 @@ class tomePipeline(StableDiffusionXLPipeline):
                         proc.set_custom_param(True)
                 
                 # NOTE(wsgwak): **REAL** CFG batchching point for image latents after opt
-                latent_model_input = ( # [2, ...]
-                    torch.cat([latents_up] * 2)
-                    if self.do_classifier_free_guidance
-                    else latents_up
-                )
+                # latent_model_input = ( # [2, ...]
+                #     torch.cat([latents_up] * 2)
+                #     if self.do_classifier_free_guidance
+                #     else latents_up
+                # )
+                # NOTE(wsgwak): latent_model_input have to be used directly!!!
                 
                 # UPDATED(wsgwak): FPE # [4, ...]
                 negative_prompt_embeds_FPE = torch.cat([negative_prompt_embeds] * 2) if self.do_classifier_free_guidance else negative_prompt_embeds
                 prompt_embeds2_FPE = torch.cat([negative_prompt_embeds_FPE, prompt_embeds2], dim=0)
-                latent_model_input_FPE = torch.cat([latent_model_input] * 2) if self.do_classifier_free_guidance else latent_model_input
+                # latent_model_input_FPE = torch.cat([latent_model_input] * 2) if self.do_classifier_free_guidance else latent_model_input
+                latent_model_input_FPE = latent_model_input
 
                 # predict the noise residual
                 noise_pred = self.unet( # [4, ...] if use_fpe else [2, ...]
@@ -946,6 +954,17 @@ class tomePipeline(StableDiffusionXLPipeline):
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
                 )[0]
+                
+                # Debug
+                if torch.equal(noise_pred[0], noise_pred[1]): # and torch.equal(noise_pred[1], noise_pred[2]):
+                    print("im right 1")
+                    # exit()
+                if torch.equal(latent_model_input_FPE[0], latent_model_input_FPE[1]): # and torch.equal(latent_model_input_FPE[1], latent_model_input_FPE[2]):
+                    print("im right 2 ")
+                    # exit()
+                if torch.equal(prompt_embeds2_FPE[0], prompt_embeds2_FPE[1]): # and torch.equal(prompt_embeds2_FPE[1], prompt_embeds2_FPE[2]):
+                    print("im right 3 ")
+                    # exit()
 
                 # perform guidance
                 if self.do_classifier_free_guidance:
