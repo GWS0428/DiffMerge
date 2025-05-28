@@ -211,10 +211,10 @@ class tomePipeline(StableDiffusionXLPipeline):
             is_cross=True,
             select=0,
         )  # h w 77
-        print("attention_maps.shape:", attention_maps.shape)
+        # print("attention_maps.shape:", attention_maps.shape)
 
         loss = 0
-        print(f"prompt: {self.prompt}")
+        # print(f"prompt: {self.prompt}")
 
         prompt = self.prompt[0] if isinstance(self.prompt, list) else self.prompt
         last_idx = len(self.tokenizer(prompt)["input_ids"]) - 1
@@ -231,8 +231,8 @@ class tomePipeline(StableDiffusionXLPipeline):
             indices.append(curr_idx)
 
         indices = [i - 1 for i in indices]
-        print("attention_for_text.shape:", attention_for_text.shape)
-        print("indices:", indices)
+        # print("attention_for_text.shape:", attention_for_text.shape)
+        # print("indices:", indices)
         cross_map = attention_for_text[:, :, indices]  # 32,32 seq_len
         cross_map = (cross_map - cross_map.amin(dim=(0, 1), keepdim=True)) / (
             cross_map.amax(dim=(0, 1), keepdim=True)
@@ -443,7 +443,7 @@ class tomePipeline(StableDiffusionXLPipeline):
                 latents,
                 t,
                 # encoder_hidden_states=self.negative_prompt_embeds,
-                encoder_hidden_states=self.negative_prompt_embeds[1:],
+                encoder_hidden_states=self.negative_prompt_embeds,
                 timestep_cond=self.timestep_cond,
                 cross_attention_kwargs=self.cross_attention_kwargs,
                 added_cond_kwargs=self.added_cond_kwargs2,
@@ -727,25 +727,31 @@ class tomePipeline(StableDiffusionXLPipeline):
             negative_add_time_ids = add_time_ids
 
         # NOTE(wsgwak): CFG batching point for text prompts & added_cond_kwargs
+        # added_cond_kwargs is only used in main unet call
         # No repeat for panchors, prompt_anchor3
+        self.use_fpe = False
         if self.do_classifier_free_guidance:
-            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-            add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
-            add_time_ids = torch.cat([negative_add_time_ids, add_time_ids], dim=0)
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0) # [2, ...] 
+            if self.use_fpe:
+                add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds] * 2, dim=0) # [4, ...]
+                add_time_ids = torch.cat([negative_add_time_ids, add_time_ids] * 2, dim=0) # [4, ...]
+            else:
+                add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0) # [2, ...]
+                add_time_ids = torch.cat([negative_add_time_ids, add_time_ids], dim=0) # [2, ...]
 
         prompt_embeds = prompt_embeds.to(device)
         add_text_embeds = add_text_embeds.to(device)
         add_time_ids = add_time_ids.to(device).repeat(batch_size * num_images_per_prompt, 1)
 
         # NOTE(wsgwak): remove later
-        if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
-            image_embeds = self.prepare_ip_adapter_image_embeds(
-                ip_adapter_image,
-                ip_adapter_image_embeds,
-                device,
-                batch_size * num_images_per_prompt,
-                self.do_classifier_free_guidance,
-            )
+        # if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
+        #     image_embeds = self.prepare_ip_adapter_image_embeds(
+        #         ip_adapter_image,
+        #         ip_adapter_image_embeds,
+        #         device,
+        #         batch_size * num_images_per_prompt,
+        #         self.do_classifier_free_guidance,
+        #     )
 
         # 8. Denoising loop
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
@@ -790,9 +796,10 @@ class tomePipeline(StableDiffusionXLPipeline):
             scale_range[0], scale_range[1], len(self.scheduler.timesteps)
         )
 
+        # NOTE(wsgwak): added_cond_kwargs is only used in main unet call
         added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
-        if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
-            added_cond_kwargs["image_embeds"] = image_embeds
+        # if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
+        #     added_cond_kwargs["image_embeds"] = image_embeds
 
         # added_cond_kwargs2 = {"text_embeds": add_text_embeds[1:], "time_ids": add_time_ids[1:]}
 
@@ -825,16 +832,23 @@ class tomePipeline(StableDiffusionXLPipeline):
                 register_self_time(self, None)
                 
                 # UPDATED(wsgwak): FPE 
+                # Unlike FPE, ToMe takes only one latents! only at the first time!
                 if ref_intermediate_latents is not None:
                     # note that the batch_size >= 2
                     latents_ref = ref_intermediate_latents[-1 - i]
-                    _, latents_cur = latents.chunk(2)
+                    if i == 0:
+                        if latents.shape[0] != 1:
+                            raise ValueError("fist latents must be of shape [1, C, H, W] for FPE.")
+                        latents_cur = latents
+                    else:
+                        _, latents_cur = latents.chunk(2)
                     latents = torch.cat([latents_ref, latents_cur])
                 else:
                     raise ValueError("ref_intermediate_latents must be provided.")
 
                 # expand the latents if we are doing classifier free guidance
                 # NOTE(wsgwak): CFG batching point for image latents
+                # NOTE(wsgwal): latents is FPE-batched at this point!!!
                 latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
                 latent_anchor = torch.cat([latents] * len(panchors)) if latent_anchor is None else latent_anchor
                 # NOTE(wsgwak): The 0-dim of latents = 2!!!
@@ -859,6 +873,7 @@ class tomePipeline(StableDiffusionXLPipeline):
                         token_control, attention_control = tome_control_steps # NOTE(wsgwak): check this option
                         
                         # EOT replace
+                        # TODO(wsgwak): check the effect. It seems like current config doesn't use it.
                         if i == eot_replace_step:
                             prompt_embeds2[1, prompt_length + 1 :] = prompt_anchor3[0][prompt_length + 1 :]
                             
@@ -907,21 +922,22 @@ class tomePipeline(StableDiffusionXLPipeline):
                             # print(f"Iteration {i} | Loss: {loss:0.4f}")
 
                 # UPDATE(wsgwak): enable FPE logic
-                for proc in attn_procs:
-                    proc.set_custom_param(True)
+                if self.use_fpe:
+                    for proc in attn_procs:
+                        proc.set_custom_param(True)
                 
-                # NOTE(wsgwak): REAL CFG batchching point for image latents after opt
-                latent_model_input = (
+                # NOTE(wsgwak): **REAL** CFG batchching point for image latents after opt
+                latent_model_input = ( # [2, ...]
                     torch.cat([latents_up] * 2)
                     if self.do_classifier_free_guidance
                     else latents_up
                 )
                 
-                # UPDATED(wsgwak): FPE
+                # UPDATED(wsgwak): FPE # [4, ...]
                 negative_prompt_embeds_FPE = torch.cat([negative_prompt_embeds] * 2) if self.do_classifier_free_guidance else negative_prompt_embeds
                 prompt_embeds2_FPE = torch.cat([negative_prompt_embeds_FPE, prompt_embeds2], dim=0)
                 latent_model_input_FPE = torch.cat([latent_model_input] * 2) if self.do_classifier_free_guidance else latent_model_input
-                
+
                 # predict the noise residual
                 noise_pred = self.unet(
                     latent_model_input_FPE,
