@@ -743,16 +743,6 @@ class tomePipeline(StableDiffusionXLPipeline):
         add_text_embeds = add_text_embeds.to(device)
         add_time_ids = add_time_ids.to(device).repeat(batch_size * num_images_per_prompt, 1)
 
-        # NOTE(wsgwak): remove later
-        # if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
-        #     image_embeds = self.prepare_ip_adapter_image_embeds(
-        #         ip_adapter_image,
-        #         ip_adapter_image_embeds,
-        #         device,
-        #         batch_size * num_images_per_prompt,
-        #         self.do_classifier_free_guidance,
-        #     )
-
         # 8. Denoising loop
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
@@ -940,9 +930,9 @@ class tomePipeline(StableDiffusionXLPipeline):
 
                 # predict the noise residual
                 noise_pred = self.unet(
-                    latent_model_input_FPE,
+                    latent_model_input_FPE if self.use_fpe else latent_model_input,
                     t,
-                    encoder_hidden_states=prompt_embeds2_FPE,
+                    encoder_hidden_states=prompt_embeds2_FPE if self.use_fpe else prompt_embeds2,
                     timestep_cond=timestep_cond,
                     cross_attention_kwargs=self.cross_attention_kwargs,
                     added_cond_kwargs=added_cond_kwargs,
