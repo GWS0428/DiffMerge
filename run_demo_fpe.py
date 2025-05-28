@@ -7,7 +7,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from configs.demo_config import RunConfig1, RunConfig2
+from configs.demo_config import RunConfig1, RunConfig2, RunConfig3
 from pipe_tome_fpe import tomePipeline
 from utils import ptp_utils, vis_utils
 from utils.ptp_utils import AttentionStore
@@ -215,7 +215,7 @@ def filter_text(token_indices, prompt_anchor):
 
 
 def main(args):
-    config = RunConfig2() #edit this to change the config
+    config = RunConfig3() #edit this to change the config
     device = "cuda" if torch.cuda.is_available() else "cpu"
     stable, prompt_parser = load_model(config, device)
     
@@ -239,6 +239,8 @@ def main(args):
 
     # FPE
     img_path = config.img_path
+    img_dir = os.path.dirname(img_path)
+    img_name = os.path.basename(img_path)
     image_source = read_image(img_path)
     image_source = image_source[:3].unsqueeze_(0).float() / 127.5 - 1.  # [-1, 1]
     image_source = F.interpolate(image_source, (1024, 1024)) # NOTE(wsgwak): 512 for SD15 and 1024 for SDXL
@@ -263,8 +265,8 @@ def main(args):
     if args.test:
         raise NotImplementedError("Dummy inversion output not implemented yet.")
     else:
-        if os.path.exists("inversion_result.pkl"):
-            with open("inversion_result.pkl", "rb") as f:
+        if os.path.exists(f"{img_dir}/{img_name}_inversion_result.pkl"):
+            with open(f"{img_dir}/{img_name}_inversion_result.pkl", "rb") as f:
                 start_code, latents_list = pickle.load(f)
         else:
             _, start_code, _, latents_list = invert(image_source,
@@ -273,11 +275,11 @@ def main(args):
                                                 pipe_inversion=pipe_inversion,
                                                 pipe_inference=pipe_inference,
                                                 do_reconstruction=False)
-            with open("inversion_result.pkl", "wb") as f:
+            with open(f"{img_dir}/{img_name}_inversion_result.pkl", "wb") as f:
                 pickle.dump((start_code, latents_list), f)
     
     # source_prompt = ""
-    target_prompt = config.prompt
+    target_prompt = [config.prompt] # NOTE(wsgwak): This should be a list of prompts!!!
     # prompts = [source_prompt, target_prompt]
     # start_code = start_code.expand(len(prompts), -1, -1, -1)
 
@@ -317,6 +319,8 @@ def main(args):
             prompt_output_path
             / f'{seed}_{"standard" if config.run_standard_sd else "tome"}.png'
         )
+        label = "standard" if config.run_standard_sd else "tome"
+        print(f"Image saved to {prompt_output_path / f'{seed}_{label}.png'}")
         images.append(image)
 
     joined_image = vis_utils.get_image_grid(images)
@@ -325,7 +329,10 @@ def main(args):
         config.output_path
         / f'{config.prompt}_{"standard" if config.run_standard_sd else "tome"}.png'
     )
-
+    
+    label = "standard" if config.run_standard_sd else "tome"
+    filename = f"{config.prompt}_{label}.png"
+    print(f"Joined image saved to {config.output_path / filename}")
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()

@@ -22,6 +22,9 @@ class CombinedAttentionProcessor(nn.Module):
         
     def set_custom_param(self, value):
         self.adopt_self_attn = value
+        
+    def get_custom_param(self):
+        return self.adopt_self_attn
 
     def __call__(self, attn: Attention, hidden_states: torch.FloatTensor, encoder_hidden_states=None,
                     attention_mask = None,temb = None,scale: float = 1.0,) -> torch.Tensor:
@@ -112,7 +115,7 @@ def register_attention_control_combined(model, tome_controller, self_attn_contro
         else:
             attn_procs[name] = processor
             continue
-        
+
         tome_control_point = False
         if name in tome_attn_greenlist:
             tome_control_point = True
@@ -125,10 +128,11 @@ def register_attention_control_combined(model, tome_controller, self_attn_contro
         )
         total_hooked_layers += 1
 
-
     model.unet.set_attn_processor(attn_procs)
 
     tome_controller.num_att_layers = tome_hooked_layers
     self_attn_controller.num_att_layers = total_hooked_layers
     
-    return attn_procs, total_hooked_layers
+    current_attn_procs = model.unet.attn_processors
+    
+    return current_attn_procs, total_hooked_layers

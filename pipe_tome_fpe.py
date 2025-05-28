@@ -829,8 +829,9 @@ class tomePipeline(StableDiffusionXLPipeline):
                 # After loop, latents.shape[0] = 2 by FPE logic
                 if self.use_fpe:
                     if ref_intermediate_latents is not None:
-                        # note that the batch_size >= 2
+                        # note that the batch_size >= 2 <- NOTE(wsgwak): not true in FPE
                         latents_ref = ref_intermediate_latents[-1 - i]
+                        # latents_ref = ref_intermediate_latents[i]
                         if i == 0:
                             if latents.shape[0] != 1:
                                 raise ValueError("fist latents must be of shape [1, C, H, W] for FPE.")
@@ -845,12 +846,15 @@ class tomePipeline(StableDiffusionXLPipeline):
                 # NOTE(wsgwak): CFG batching point for image latents
                 # NOTE(wsgwal): latents is FPE-batched at this point!!! [2, ...]
                 latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents # [4, ...] if use_fpe else [2, ...]
-                latent_anchor = torch.cat([latents] * len(panchors)) if latent_anchor is None else latent_anchor # []
+                if self.use_fpe:
+                    latent_anchor = torch.cat([latents[-1:]] * len(panchors)) if latent_anchor is None else latent_anchor # []
+                else:
+                    latent_anchor = torch.cat([latents] * len(panchors)) if latent_anchor is None else latent_anchor # []
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 latent_anchor = self.scheduler.scale_model_input(latent_anchor, t)
 
-                # UPDATED(wsgwak): adjust shape for FPE
+                # UPDATED(wsgwak): use  for FPE
                 # latents_up = (latent_model_input[1:].clone().detach())  # .requires_grad_(True)
                 latents_up = (latent_model_input[-1:].clone().detach())  # .requires_grad_(True)
 
@@ -859,7 +863,7 @@ class tomePipeline(StableDiffusionXLPipeline):
                 # UPDATE(wsgwak): disable FPE logic during TOME
                 # NOTE(wsgwak): find a way to enable FPE logic during TOME
                 # Currently, it raises gradient error if we enable FPE logic.
-                for proc in attn_procs:
+                for name, proc in attn_procs.items():
                     proc.set_custom_param(False)
                         
                 with torch.enable_grad():
@@ -917,7 +921,7 @@ class tomePipeline(StableDiffusionXLPipeline):
 
                 # UPDATE(wsgwak): enable FPE logic
                 if self.use_fpe:
-                    for proc in attn_procs:
+                    for name, proc in attn_procs.items():
                         proc.set_custom_param(True)
                 
                 # NOTE(wsgwak): **REAL** CFG batchching point for image latents after opt
@@ -933,7 +937,7 @@ class tomePipeline(StableDiffusionXLPipeline):
                 latent_model_input_FPE = torch.cat([latent_model_input] * 2) if self.do_classifier_free_guidance else latent_model_input
 
                 # predict the noise residual
-                noise_pred = self.unet(
+                noise_pred = self.unet( # [4, ...] if use_fpe else [2, ...]
                     latent_model_input_FPE if self.use_fpe else latent_model_input,
                     t,
                     encoder_hidden_states=prompt_embeds2_FPE if self.use_fpe else prompt_embeds2,
