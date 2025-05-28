@@ -261,15 +261,6 @@ def main(args):
                         guidance_scale = 7.5,) # NOTE(wsgwak): Check if 0.0 works better
 
     if args.test:
-        # NOTE(wsgwak): Not working
-        # _, start_code, _, latents_list = get_dummy_inversion_output(
-        #     model_type=model_type,
-        #     scheduler_type=scheduler_type,
-        #     num_inversion_steps=50,
-        #     batch_size=1,
-        #     do_reconstruction_dummy=False,
-        #     seed=7865,
-        # )
         raise NotImplementedError("Dummy inversion output not implemented yet.")
     else:
         if os.path.exists("inversion_result.pkl"):

@@ -672,30 +672,30 @@ class tomePipeline(StableDiffusionXLPipeline):
         # 5. Prepare latent variables 
         # UPDATED(wsgwak): the inverted image latents are provided as input for FPE.
         num_channels_latents = self.unet.config.in_channels
-        if latents == None:
-            raise ValueError(
-                "Latents must be provided. Please provide inverted image latents to the pipeline."
-            )
-        latents_shape = (
-            batch_size, # 2 -> [source, target] -> ["", "a red car"]
-            num_channels_latents,
-            int(height) // self.vae_scale_factor,
-            int(width) // self.vae_scale_factor,
-        )
-        if latents.shape != latents_shape:
-            raise ValueError(
-                f"Latents shape {latents.shape} is not the expected shape {latents_shape}"
-            )
-        # latents = self.prepare_latents(
-        #     batch_size * num_images_per_prompt,
+        # if latents == None:
+        #     raise ValueError(
+        #         "Latents must be provided. Please provide inverted image latents to the pipeline."
+        #     )
+        # latents_shape = (
+        #     batch_size, # 2 -> [source, target] -> ["", "a red car"]
         #     num_channels_latents,
-        #     height,
-        #     width,
-        #     prompt_embeds.dtype,
-        #     device,
-        #     generator,
-        #     latents,
+        #     int(height) // self.vae_scale_factor,
+        #     int(width) // self.vae_scale_factor,
         # )
+        # if latents.shape != latents_shape:
+        #     raise ValueError(
+        #         f"Latents shape {latents.shape} is not the expected shape {latents_shape}"
+        #     )
+        latents = self.prepare_latents(
+            batch_size * num_images_per_prompt,
+            num_channels_latents,
+            height,
+            width,
+            prompt_embeds.dtype,
+            device,
+            generator,
+            latents,
+        )
 
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         # TODO(wsgwak): Move this part to outside and use it in opt_token for consistency
@@ -726,10 +726,12 @@ class tomePipeline(StableDiffusionXLPipeline):
         else:
             negative_add_time_ids = add_time_ids
 
+        # NOTE(wsgwak): FPE option!!! Move outside ***
+        self.use_fpe = True
+        
         # NOTE(wsgwak): CFG batching point for text prompts & added_cond_kwargs
         # added_cond_kwargs is only used in main unet call
         # No repeat for panchors, prompt_anchor3
-        self.use_fpe = False
         if self.do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0) # [2, ...] 
             if self.use_fpe:
@@ -822,26 +824,28 @@ class tomePipeline(StableDiffusionXLPipeline):
                 register_self_time(self, None)
                 
                 # UPDATED(wsgwak): FPE 
-                # Unlike FPE, ToMe takes only one latents! only at the first time!
-                if ref_intermediate_latents is not None:
-                    # note that the batch_size >= 2
-                    latents_ref = ref_intermediate_latents[-1 - i]
-                    if i == 0:
-                        if latents.shape[0] != 1:
-                            raise ValueError("fist latents must be of shape [1, C, H, W] for FPE.")
-                        latents_cur = latents
+                # Unlike FPE, ToMe takes only one latents! 
+                # latents.shape[0] = 1 only at the first time!
+                # After loop, latents.shape[0] = 2 by FPE logic
+                if self.use_fpe:
+                    if ref_intermediate_latents is not None:
+                        # note that the batch_size >= 2
+                        latents_ref = ref_intermediate_latents[-1 - i]
+                        if i == 0:
+                            if latents.shape[0] != 1:
+                                raise ValueError("fist latents must be of shape [1, C, H, W] for FPE.")
+                            latents_cur = latents
+                        else:
+                            _, latents_cur = latents.chunk(2)
+                        latents = torch.cat([latents_ref, latents_cur])
                     else:
-                        _, latents_cur = latents.chunk(2)
-                    latents = torch.cat([latents_ref, latents_cur])
-                else:
-                    raise ValueError("ref_intermediate_latents must be provided.")
+                        raise ValueError("ref_intermediate_latents must be provided.")
 
                 # expand the latents if we are doing classifier free guidance
                 # NOTE(wsgwak): CFG batching point for image latents
-                # NOTE(wsgwal): latents is FPE-batched at this point!!!
-                latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
-                latent_anchor = torch.cat([latents] * len(panchors)) if latent_anchor is None else latent_anchor
-                # NOTE(wsgwak): The 0-dim of latents = 2!!!
+                # NOTE(wsgwal): latents is FPE-batched at this point!!! [2, ...]
+                latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents # [4, ...] if use_fpe else [2, ...]
+                latent_anchor = torch.cat([latents] * len(panchors)) if latent_anchor is None else latent_anchor # []
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 latent_anchor = self.scheduler.scale_model_input(latent_anchor, t)
@@ -859,7 +863,7 @@ class tomePipeline(StableDiffusionXLPipeline):
                     proc.set_custom_param(False)
                         
                 with torch.enable_grad():
-                    if not run_standard_sd: # NOTE(wsgwak): check this option
+                    if not run_standard_sd:
                         token_control, attention_control = tome_control_steps # NOTE(wsgwak): check this option
                         
                         # EOT replace

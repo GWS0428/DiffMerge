@@ -104,7 +104,8 @@ class RunConfig2:
     # words of the prompt
     prompt_length: int = 7
     # Which random seeds to use when generating
-    seeds: List[int] = field(default_factory=lambda: [43, 198])
+    # seeds: List[int] = field(default_factory=lambda: [43, 198])
+    seeds: List[int] = field(default_factory=lambda: [43])
     # Path to save all outputs to
     output_path: Path = Path("./demo")
     # Number of denoising steps
