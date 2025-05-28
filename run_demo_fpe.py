@@ -219,18 +219,6 @@ def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     stable, prompt_parser = load_model(config, device)
     
-    # --- monkey patch for FPE ---
-    def custom_forward(self, *args, adopt_self_attn=None, **kwargs):
-        print(f"Custom param is added into unet: {adopt_self_attn}")
-        self.adopt_self_attn = adopt_self_attn
-        return original_forward(self, *args, **kwargs)
-
-    # Store original
-    original_forward = stable.unet.forward
-
-    # Patch
-    stable.unet.forward = custom_forward.__get__(stable.unet, UNet2DConditionModel)
-        
     # ------------------parser prompt-------------------------
     if config.use_nlp:
         import en_core_web_trf
@@ -297,10 +285,10 @@ def main(args):
             with open("inversion_result.pkl", "wb") as f:
                 pickle.dump((start_code, latents_list), f)
     
-    source_prompt = ""
+    # source_prompt = ""
     target_prompt = config.prompt
-    prompts = [source_prompt, target_prompt]
-    start_code = start_code.expand(len(prompts), -1, -1, -1)
+    # prompts = [source_prompt, target_prompt]
+    # start_code = start_code.expand(len(prompts), -1, -1, -1)
 
     images = []
     for seed in config.seeds:
@@ -312,7 +300,7 @@ def main(args):
         g = torch.Generator("cuda").manual_seed(seed) 
         
         tome_controller = AttentionStore() # ToMe controller 
-        self_attn_controller = SelfAttentionControlEdit(prompts, NUM_DIFFUSION_STEPS, self_replace_steps=self_replace_steps)
+        self_attn_controller = SelfAttentionControlEdit(target_prompt, NUM_DIFFUSION_STEPS, self_replace_steps=self_replace_steps)
         attn_procs, total_hooked_layers = register_attention_control_combined(
             stable,
             tome_controller,
@@ -323,7 +311,7 @@ def main(args):
             image_source=image_source,
             start_code=start_code,
             latents_list=latents_list,
-            prompts=prompts,
+            prompts=target_prompt,
             model=stable,
             tome_attn_store=tome_controller,
             attn_procs=attn_procs,

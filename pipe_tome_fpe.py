@@ -211,8 +211,10 @@ class tomePipeline(StableDiffusionXLPipeline):
             is_cross=True,
             select=0,
         )  # h w 77
+        print("attention_maps.shape:", attention_maps.shape)
 
         loss = 0
+        print(f"prompt: {self.prompt}")
 
         prompt = self.prompt[0] if isinstance(self.prompt, list) else self.prompt
         last_idx = len(self.tokenizer(prompt)["input_ids"]) - 1
@@ -229,6 +231,8 @@ class tomePipeline(StableDiffusionXLPipeline):
             indices.append(curr_idx)
 
         indices = [i - 1 for i in indices]
+        print("attention_for_text.shape:", attention_for_text.shape)
+        print("indices:", indices)
         cross_map = attention_for_text[:, :, indices]  # 32,32 seq_len
         cross_map = (cross_map - cross_map.amin(dim=(0, 1), keepdim=True)) / (
             cross_map.amax(dim=(0, 1), keepdim=True)
@@ -315,12 +319,14 @@ class tomePipeline(StableDiffusionXLPipeline):
         if ratio <= 0.9:
             max_refinement_steps = max_refinement_steps[1]
         iteration = 0
+        # print('---- Iterative refinement ----')
         while True:
             iteration += 1
             torch.cuda.empty_cache()
             latents = latents.clone().detach().requires_grad_(True)
             text_embeddings = text_embeddings.clone().detach().requires_grad_(True)
 
+            # NOTE(wsgwak): This is required to compute tome_controller in attn computation
             noise_pred_text = self.unet(
                 latents,
                 t,
@@ -329,7 +335,7 @@ class tomePipeline(StableDiffusionXLPipeline):
                 cross_attention_kwargs=self.cross_attention_kwargs,
                 added_cond_kwargs=self.added_cond_kwargs2,
             ).sample
-
+            # print(attention_store.attention_store)
             loss = self._entropy_loss(
                 attention_store, indices_to_alter, attention_res, pose_loss=pose_loss
             )
@@ -363,15 +369,14 @@ class tomePipeline(StableDiffusionXLPipeline):
         stoken: dim
         prompt_anchor: 77 dim
         """
-        stoken_new = stoken.unsqueeze(0).unsqueeze(0).repeat(2, 1, 1)
-        stoken_new.requires_grad_(True)
+        stoken.requires_grad_(True)
 
         latents = latents.clone().detach().unsqueeze(0)
         
         # NOTE(wsgwak): HOTFIX for FPE
         # NOTE(wsgwak): check if self-attn adoption affect this point
-        latents = torch.cat([latents, latents], dim=0)
-        prompt_anchor = torch.cat([prompt_anchor, prompt_anchor], dim=0)
+        # latents = torch.cat([latents, latents], dim=0)
+        # prompt_anchor = torch.cat([prompt_anchor, prompt_anchor], dim=0)
         iteration = 0
 
         with torch.no_grad():
@@ -383,24 +388,21 @@ class tomePipeline(StableDiffusionXLPipeline):
                 cross_attention_kwargs=self.cross_attention_kwargs,
                 added_cond_kwargs=self.added_cond_kwargs2,
             ).sample
-            # noise_pred_anchor = noise_pred_anchor[1:2]
             
         while True:
             iteration += 1
             noise_pred_token = self.unet(
                 latents,
                 t,
-                encoder_hidden_states=stoken_new,
+                encoder_hidden_states=stoken.unsqueeze(0).unsqueeze(0),
                 timestep_cond=self.timestep_cond,
                 cross_attention_kwargs=self.cross_attention_kwargs,
                 added_cond_kwargs=self.added_cond_kwargs2,
             ).sample
-            # noise_pred_token = noise_pred_token[1:2]
 
-            # loss = torch.nn.functional.mse_loss(noise_pred_anchor[1:2], noise_pred_token[1:2])
             loss = torch.nn.functional.mse_loss(noise_pred_anchor, noise_pred_token)
 
-            stoken_new = self._update_stoken(stoken_new, loss, 10000)
+            stoken = self._update_stoken(stoken, loss, 10000)
             if iteration >= iter_num:
                 print(
                     f"Semantic binding loss optimization Exceeded max number of iterations ({iter_num}) "
@@ -440,7 +442,8 @@ class tomePipeline(StableDiffusionXLPipeline):
             noise_pred_null = self.unet(
                 latents,
                 t,
-                encoder_hidden_states=self.negative_prompt_embeds,
+                # encoder_hidden_states=self.negative_prompt_embeds,
+                encoder_hidden_states=self.negative_prompt_embeds[1:],
                 timestep_cond=self.timestep_cond,
                 cross_attention_kwargs=self.cross_attention_kwargs,
                 added_cond_kwargs=self.added_cond_kwargs2,
@@ -461,7 +464,7 @@ class tomePipeline(StableDiffusionXLPipeline):
             # self.scheduler._step_index -= 1 
             
             
-        return stoken_new[0, 0], latents[0]
+        return stoken, latents[0]
 
     @torch.no_grad()
     def __call__(
@@ -793,9 +796,16 @@ class tomePipeline(StableDiffusionXLPipeline):
 
         # added_cond_kwargs2 = {"text_embeds": add_text_embeds[1:], "time_ids": add_time_ids[1:]}
 
+        # NOTE(wsgwak): This is used in opt_token, refinement step
+        # those method require non-batched input!
+        # current implementation with FPE double the first dim.
+        # added_cond_kwargs2 = {
+        #     "text_embeds": torch.zeros_like(add_text_embeds[1:]),
+        #     "time_ids": add_time_ids[1:],
+        # }
         added_cond_kwargs2 = {
-            "text_embeds": torch.zeros_like(add_text_embeds[1:]),
-            "time_ids": add_time_ids[1:],
+            "text_embeds": torch.zeros_like(add_text_embeds[-1:]),
+            "time_ids": add_time_ids[-1:],
         }
         
         self.added_cond_kwargs2 = added_cond_kwargs2
@@ -832,8 +842,9 @@ class tomePipeline(StableDiffusionXLPipeline):
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 latent_anchor = self.scheduler.scale_model_input(latent_anchor, t)
 
-                latents_up = (latent_model_input[1:].clone().detach())  # .requires_grad_(True)
-                # latents_up = (latent_model_input[latent_model_input.shape[0] // 2:].clone().detach())  # .requires_grad_(True)
+                # UPDATED(wsgwak): adjust shape for FPE
+                # latents_up = (latent_model_input[1:].clone().detach())  # .requires_grad_(True)
+                latents_up = (latent_model_input[-1:].clone().detach())  # .requires_grad_(True)
 
                 prompt_embeds2 = (prompt_embeds if prompt_embeds2 is None else prompt_embeds2)
 
@@ -893,7 +904,7 @@ class tomePipeline(StableDiffusionXLPipeline):
                                 )
                             )
 
-                            print(f"Iteration {i} | Loss: {loss:0.4f}")
+                            # print(f"Iteration {i} | Loss: {loss:0.4f}")
 
                 # UPDATE(wsgwak): enable FPE logic
                 for proc in attn_procs:
@@ -910,6 +921,7 @@ class tomePipeline(StableDiffusionXLPipeline):
                 negative_prompt_embeds_FPE = torch.cat([negative_prompt_embeds] * 2) if self.do_classifier_free_guidance else negative_prompt_embeds
                 prompt_embeds2_FPE = torch.cat([negative_prompt_embeds_FPE, prompt_embeds2], dim=0)
                 latent_model_input_FPE = torch.cat([latent_model_input] * 2) if self.do_classifier_free_guidance else latent_model_input
+                
                 # predict the noise residual
                 noise_pred = self.unet(
                     latent_model_input_FPE,

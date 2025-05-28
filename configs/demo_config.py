@@ -86,7 +86,9 @@ class RunConfig2:
     # stable diffusion model path,set to None means sdxl model will be downloaded automatically
     model_path: str = "stabilityai/stable-diffusion-xl-base-1.0"
     # whether use nlp model to spilt the prompt
-    use_nlp: bool = True
+    # TODO(wsgwak): use_nlp is not working!! Fix it.
+    # use_nlp: bool = True
+    use_nlp: bool = False
     # Which token indices to merge
     token_indices: List[int] = field(default_factory=lambda: [[[2], [3]], [[6], [7]]])
     # Spilt prompt

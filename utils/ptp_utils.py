@@ -160,7 +160,6 @@ def register_attention_control(model, controller):
         attn_procs[name] = AttendExciteCrossAttnProcessor(
             attnstore=controller, place_in_unet=place_in_unet
         )
-        # print("registering", name, place_in_unet)
 
     model.unet.set_attn_processor(attn_procs)
     controller.num_att_layers = cross_att_count

@@ -99,6 +99,7 @@ def register_attention_control_combined(model, tome_controller, self_attn_contro
                            "up_blocks.0.attentions.1.transformer_blocks.3.attn1.processor"]
     attn_procs = {}
     total_hooked_layers = 0
+    tome_hooked_layers = 0
 
     for name, processor in model.unet.attn_processors.items():
         place_in_unet = None
@@ -115,6 +116,7 @@ def register_attention_control_combined(model, tome_controller, self_attn_contro
         tome_control_point = False
         if name in tome_attn_greenlist:
             tome_control_point = True
+            tome_hooked_layers += 1
         attn_procs[name] = CombinedAttentionProcessor(
             tome_controller=tome_controller,
             self_attn_controller=self_attn_controller,
@@ -126,7 +128,7 @@ def register_attention_control_combined(model, tome_controller, self_attn_contro
 
     model.unet.set_attn_processor(attn_procs)
 
-    tome_controller.num_att_layers = total_hooked_layers
+    tome_controller.num_att_layers = tome_hooked_layers
     self_attn_controller.num_att_layers = total_hooked_layers
     
     return attn_procs, total_hooked_layers
