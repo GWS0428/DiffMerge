@@ -65,12 +65,16 @@ class CombinedAttentionProcessor(nn.Module):
         value = attn.head_to_batch_dim(value)
 
         attention_probs = attn.get_attention_scores(query, key, attention_mask)
+        attention_probs_origin = attention_probs.clone().detach()
         
         # FIXME(wsgwak): Add a logic to avoid graident error at this point
         if self.adopt_self_attn:
             attention_probs = self.self_attn_controller(attention_probs, is_cross, self.place_in_unet)
         if self.tome_control_point:
             self.tome_controller(attention_probs, is_cross, self.place_in_unet) 
+            if torch.not_equal(attention_probs, attention_probs_origin).any():
+                print("TOME controller modified attention probabilities")   
+                exit()
         # self.attnstore(attention_probs, is_cross, self.place_in_unet)
 
         hidden_states = torch.bmm(attention_probs, value)
@@ -94,12 +98,14 @@ class CombinedAttentionProcessor(nn.Module):
 
 # Define the registration function
 def register_attention_control_combined(model, tome_controller, self_attn_controller):
-    tome_attn_greenlist = ["up_blocks.0.attentions.1.transformer_blocks.1.attn2.processor",
-                           "up_blocks.0.attentions.1.transformer_blocks.2.attn2.processor",
-                           "up_blocks.0.attentions.1.transformer_blocks.3.attn2.processor",
-                           "up_blocks.0.attentions.1.transformer_blocks.1.attn1.processor",
-                           "up_blocks.0.attentions.1.transformer_blocks.2.attn1.processor",
-                           "up_blocks.0.attentions.1.transformer_blocks.3.attn1.processor"]
+    tome_attn_greenlist = [
+        # "up_blocks.1.attentions.0.transformer_blocks.0.attn1.processor",
+        "up_blocks.1.attentions.0.transformer_blocks.0.attn2.processor",
+        # "up_blocks.1.attentions.1.transformer_blocks.0.attn1.processor",
+        "up_blocks.1.attentions.1.transformer_blocks.0.attn2.processor",
+        # "up_blocks.1.attentions.2.transformer_blocks.0.attn1.processor",
+        "up_blocks.1.attentions.2.transformer_blocks.0.attn2.processor",
+    ]
     attn_procs = {}
     total_hooked_layers = 0
     tome_hooked_layers = 0

@@ -118,7 +118,7 @@ class SelfAttentionControlEdit(AttentionStore, abc.ABC):
         # print(attn_base.shape[2])
         # print(attn_base.shape[2] // 2)
         # NOTE(wsgwak): Check the resolution of the attention map in SDXL, SD15
-        if att_replace.shape[2] <= 32 ** 2:
+        if att_replace.shape[2] <= 32 ** 2: # TODO(wsgwak): important
             attn_base = attn_base.unsqueeze(0).expand(att_replace.shape[0], *attn_base.shape)
             return attn_base
         else:
@@ -127,6 +127,7 @@ class SelfAttentionControlEdit(AttentionStore, abc.ABC):
     
     def forward(self, attn, is_cross: bool, place_in_unet: str):
         super(SelfAttentionControlEdit, self).forward(attn, is_cross, place_in_unet)
+        # print(f"num_self_replace: {self.num_self_replace}, cur_step: {self.cur_step}, is_cross: {is_cross}, place_in_unet: {place_in_unet}")
         if is_cross or (self.num_self_replace[0] <= self.cur_step < self.num_self_replace[1]):
             h = attn.shape[0] // (self.batch_size)
             attn = attn.reshape(self.batch_size, h, *attn.shape[1:])
@@ -141,10 +142,11 @@ class SelfAttentionControlEdit(AttentionStore, abc.ABC):
     def __init__(self, prompts, num_steps: int,
                  self_replace_steps: Union[float, Tuple[float, float]]):
         super(SelfAttentionControlEdit, self).__init__()
-        self.batch_size = len(prompts)
+        self.batch_size = len(prompts) * 2
         if type(self_replace_steps) is float:
             self_replace_steps = 0, self_replace_steps
         self.num_self_replace = int(num_steps * self_replace_steps[0]), int(num_steps * self_replace_steps[1])
+        print("self.num_self_replace", self.num_self_replace)
 
     
 def register_attention_control_new(model, controller):

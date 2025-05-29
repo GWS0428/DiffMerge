@@ -1,0 +1,35 @@
+# considerations
+1. Which type of scheduler is used for image inversion?
+    FPE - DDIMScheduler
+    ToMe - X
+2. Which type of scheduler is used for image generation?
+    FPE - DDIMScheduler
+    ToMe - 
+3. 
+4. 
+
+# variables & dimension
+    outputs = model(
+        latents=start_code, # added # inverted image latent 
+        ref_intermediate_latents=latents_list, # added # list of latents in inversion steps
+        prompt=prompts, # target orig prompt 
+        guidance_scale=config.guidance_scale,
+        generator=seed,
+        num_inference_steps=config.n_inference_steps,
+        attention_store=tome_attn_store, # attn_processor
+        indices_to_alter=token_indices, #
+        prompt_anchor=prompt_anchor, # 
+        attention_res=config.attention_res,
+        run_standard_sd=config.run_standard_sd,
+        thresholds=config.thresholds,
+        scale_factor=config.scale_factor,
+        scale_range=config.scale_range,
+        prompt3=config.prompt_merged, # 
+        prompt_length=config.prompt_length, # 
+        token_refinement_steps=config.token_refinement_steps, 
+        attention_refinement_steps=config.attention_refinement_steps, 
+        tome_control_steps=config.tome_control_steps, 
+        eot_replace_step=config.eot_replace_step, 
+        use_pose_loss=config.use_pose_loss, 
+        negative_prompt="low res, ugly, blurry, artifact, unreal", 
+    )
