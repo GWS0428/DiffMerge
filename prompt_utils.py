@@ -1,7 +1,6 @@
 import torch
 from diffusers import DiffusionPipeline
 from transformers import AutoTokenizer
-import spacy
 
 from typing import List, Dict
 

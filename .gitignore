@@ -1,0 +1,11 @@
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pkl
+
+__pycache__
+
+attention_maps
+pics
+demo

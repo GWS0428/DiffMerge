@@ -10,7 +10,6 @@ from pipe_tome import tomePipeline
 from utils import ptp_utils, vis_utils
 from utils.ptp_utils import AttentionStore
 from prompt_utils import PromptParser
-import spacy
 import os
 
 import warnings
@@ -122,15 +121,16 @@ def main():
     stable, prompt_parser = load_model(config, device)
     # ------------------parser prompt-------------------------
     if config.use_nlp:
-        import en_core_web_trf
+        # import en_core_web_trf
 
-        nlp = en_core_web_trf.load()  # load spacy
+        # nlp = en_core_web_trf.load()  # load spacy
 
-        doc = nlp(config.prompt)
-        prompt_parser.set_doc(doc)
-        token_indices = prompt_parser._get_indices(config.prompt)
-        prompt_anchor = prompt_parser._split_prompt(doc)
-        token_indices, prompt_anchor = filter_text(token_indices, prompt_anchor)
+        # doc = nlp(config.prompt)
+        # prompt_parser.set_doc(doc)
+        # token_indices = prompt_parser._get_indices(config.prompt)
+        # prompt_anchor = prompt_parser._split_prompt(doc)
+        # token_indices, prompt_anchor = filter_text(token_indices, prompt_anchor)
+        raise NotImplementedError("NLP parsing is not implemented yet.")
     else:
         token_indices = config.token_indices
         prompt_anchor = config.prompt_anchor
