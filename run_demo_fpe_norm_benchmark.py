@@ -40,7 +40,9 @@ def dict_to_namespace(data):
         # For example:
         # if 'output_path' in data and isinstance(data['output_path'], str):
         #     data['output_path'] = Path(data['output_path'])
-
+        if not all(isinstance(k, str) for k in data.keys()):
+            return {k: dict_to_namespace(v) for k, v in data.items()}
+        
         return SimpleNamespace(**{
             key: dict_to_namespace(value)
             for key, value in data.items()
@@ -59,6 +61,10 @@ def load_config_json(filepath):
     # Handle Path conversion if necessary after loading
     if 'output_path' in config_dict and isinstance(config_dict['output_path'], str):
          config_dict['output_path'] = Path(config_dict['output_path'])
+         
+    if 'thresholds' in config_dict:
+        config_dict['thresholds'] = {int(k): v for k, v in config_dict['thresholds'].items()}
+
 
     return dict_to_namespace(config_dict)
 
@@ -206,6 +212,7 @@ def load_image(image_path, device):
 
 def main(args):
     config = load_config_json(args.config_file)
+    # config.thresholds = {int(k): v for k, v in vars(config.thresholds).items()}
     device = "cuda" if torch.cuda.is_available() else "cpu"
     stable, prompt_parser = load_model(config, device)
     
