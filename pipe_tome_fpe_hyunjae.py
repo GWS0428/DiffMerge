@@ -846,7 +846,7 @@ class tomeV1Pipeline(StableDiffusionPipeline):
                 # NOTE(wsgwal): latents is FPE-batched at this point!!! [2, ...]
                 latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents # [4, ...] if use_fpe else [2, ...]
                 # latent_model_input = torch.cat()
-                if run_standard_sd:
+                if not run_standard_sd:
                     if self.use_fpe:
                         latent_anchor = torch.cat([latents[-1:]] * len(panchors)) if latent_anchor is None else latent_anchor # []
                     else:
