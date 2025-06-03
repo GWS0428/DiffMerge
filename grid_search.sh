@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage:
-#   ./run_batch_multi_dir.sh 0 16 --metric
+#   ./grid_search.sh 0 16 --metric
 
 START=${1:-0}
 END=${2:-9999}

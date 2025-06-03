@@ -12,3 +12,4 @@ ipython==8.18.1
 einops==0.8.1
 accelerate==0.25.0
 matplotlib==3.9.4
+torchmetrics==1.7.2

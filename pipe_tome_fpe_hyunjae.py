@@ -650,7 +650,11 @@ class tomeV1Pipeline(StableDiffusionPipeline):
         # token merge
         if not run_standard_sd:
             print("Token merge is enabled. Merging tokens...")
-            prompt_embeds[0] = token_merge(prompt_embeds[0], indices_to_alter)
+            # indices_to_alter can be empty list
+            if indices_to_alter == []:
+                run_standard_sd = True
+            else:
+                prompt_embeds[0] = token_merge(prompt_embeds[0], indices_to_alter)
 
         # 4. Prepare timesteps
         timesteps, num_inference_steps = retrieve_timesteps(
