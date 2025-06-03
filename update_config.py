@@ -8,6 +8,7 @@ import numpy as np
 
 def update_config(
     config_dir, 
+    output_path=None,
     run_standard_sd=False,
     tome_control_steps=[0, 0],
     token_refinement_steps=0,
@@ -35,6 +36,8 @@ def update_config(
                     config['eot_replace_step'] = eot_replace_step
                 if 'self_replace_steps' in config:
                     config['self_replace_steps'] = self_replace_steps
+                if 'output_path' in config and output_path is not None:
+                    config['output_path'] = output_path
                 
                 # Save the updated config back to the file
                 with open(file_path, 'w') as f:
@@ -69,10 +72,14 @@ if __name__ == "__main__":
     argparser.add_argument(
         "--self_replace_steps", type=float, default=0.6, help="Self replace steps."
     )
+    argparser.add_argument(
+        "--output_path", type=str, default=None, help="Output path to save updated configs."
+    )
     
     args = argparser.parse_args()
     update_config(
         config_dir=args.config_dir,
+        output_path=args.output_path,
         run_standard_sd=args.run_standard_sd,
         tome_control_steps=args.tome_control_steps,
         token_refinement_steps=args.token_refinement_steps,

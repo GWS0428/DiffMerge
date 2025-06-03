@@ -253,6 +253,8 @@ def main(args):
     self_replace_steps = config.self_replace_steps
 
     images = []
+    if len(config.seeds) != 1:
+        raise ValueError("Currently, only one seed is supported for the benchmark.")
     for seed in config.seeds:
         print(f"Seed: {seed}")
         print(f"Original Prompt: {config.prompt}")
@@ -330,7 +332,8 @@ def main(args):
         print(f"CDS Score: {cds_score_value}")
 
         # Optionally save to file
-        metrics_out = config.output_path / f"{config.prompt}_metrics.txt"
+        label = "standard" if config.run_standard_sd else "tome"
+        metrics_out = config.output_path / config.prompt / f"{config.seeds[0]}_{label}_metrics.txt"
         with open(metrics_out, "w") as f:
             f.write(f"CLIP Score: {clip_score_value}\n")
             f.write(f"CDS Score: {cds_score_value}\n")
