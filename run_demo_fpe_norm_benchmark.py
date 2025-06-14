@@ -214,7 +214,7 @@ def main(args):
     config = load_config_json(args.config_file)
     # config.thresholds = {int(k): v for k, v in vars(config.thresholds).items()}
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    stable, prompt_parser = load_model(config, device)
+    stable, prompt_parser = load_model(config, device) if not args.metric_only else (None, None)
     
     # ------------------parser prompt-------------------------
     if config.use_nlp:
@@ -255,45 +255,55 @@ def main(args):
     images = []
     if len(config.seeds) != 1:
         raise ValueError("Currently, only one seed is supported for the benchmark.")
-    for seed in config.seeds:
-        print(f"Seed: {seed}")
-        print(f"Original Prompt: {config.prompt}")
-        print(f"Anchor Prompt: {prompt_anchor}")
-        print(f"Indices of merged tokens: {token_indices}")
-        # NOTE(wsgwak): Check it Scheduler should get g. Otherwise the internal copy don't need g.
-        g = torch.Generator("cuda").manual_seed(seed) 
+    
+    if not args.metric_only:
+        # check if image is already generated
+        for seed in config.seeds:
+            label = "standard" if config.run_standard_sd else "tome"
+            image_path = config.output_path / config.prompt / f"{seed}_{label}.png"
+            if image_path.exists():
+                print(f"Image already exists: {image_path}")
+                exit()
         
-        tome_controller = AttentionStore() # ToMe controller 
-        self_attn_controller = SelfAttentionControlEdit(target_prompt, NUM_DIFFUSION_STEPS, self_replace_steps=self_replace_steps)
-        attn_procs, total_hooked_layers = register_attention_control_combined(
-            stable,
-            tome_controller,
-            self_attn_controller,
-        )
+        for seed in config.seeds:
+            print(f"Seed: {seed}")
+            print(f"Original Prompt: {config.prompt}")
+            print(f"Anchor Prompt: {prompt_anchor}")
+            print(f"Indices of merged tokens: {token_indices}")
+            # NOTE(wsgwak): Check it Scheduler should get g. Otherwise the internal copy don't need g.
+            g = torch.Generator("cuda").manual_seed(seed) 
+            
+            tome_controller = AttentionStore() # ToMe controller 
+            self_attn_controller = SelfAttentionControlEdit(target_prompt, NUM_DIFFUSION_STEPS, self_replace_steps=self_replace_steps)
+            attn_procs, total_hooked_layers = register_attention_control_combined(
+                stable,
+                tome_controller,
+                self_attn_controller,
+            )
 
-        image = run_on_prompt(
-            image_source=image_source,
-            start_code=start_code,
-            latents_list=latents_list,
-            prompts=target_prompt,
-            # prompts=['a cat wearing a shirt and a dog wearing a tie'],
-            model=stable,
-            tome_attn_store=tome_controller,
-            attn_procs=attn_procs,
-            token_indices=token_indices,
-            prompt_anchor=prompt_anchor,
-            seed=g,
-            config=config,
-        )
-        prompt_output_path = config.output_path / config.prompt
-        prompt_output_path.mkdir(exist_ok=True, parents=True)
-        image.save(
-            prompt_output_path
-            / f'{seed}_{"standard" if config.run_standard_sd else "tome"}.png'
-        )
-        label = "standard" if config.run_standard_sd else "tome"
-        print(f"Image saved to {prompt_output_path / f'{seed}_{label}.png'}")
-        images.append(image)
+            image = run_on_prompt(
+                image_source=image_source,
+                start_code=start_code,
+                latents_list=latents_list,
+                prompts=target_prompt,
+                # prompts=['a cat wearing a shirt and a dog wearing a tie'],
+                model=stable,
+                tome_attn_store=tome_controller,
+                attn_procs=attn_procs,
+                token_indices=token_indices,
+                prompt_anchor=prompt_anchor,
+                seed=g,
+                config=config,
+            )
+            prompt_output_path = config.output_path / config.prompt
+            prompt_output_path.mkdir(exist_ok=True, parents=True)
+            image.save(
+                prompt_output_path
+                / f'{seed}_{"standard" if config.run_standard_sd else "tome"}.png'
+            )
+            label = "standard" if config.run_standard_sd else "tome"
+            print(f"Image saved to {prompt_output_path / f'{seed}_{label}.png'}")
+            images.append(image)
 
     # --- Metric Calculation ---
     if args.metric:
@@ -301,10 +311,29 @@ def main(args):
 
         # Convert PIL images to numpy for CLIP Score
         import numpy as np
+        from torchvision.transforms import functional as TF
+        from PIL import Image
 
-        images_np = np.stack([
-            np.array(img.convert("RGB")).astype(np.float32) / 255.0 for img in images
-        ])
+        images_np = None
+        if args.metric_only:
+            # Load images from the output directory
+            images = []
+            for seed in config.seeds:
+                label = "standard" if config.run_standard_sd else "tome"
+                image_path = config.output_path / config.prompt / f"{seed}_{label}.png"
+                if image_path.exists():
+                    img = Image.open(image_path).convert("RGB")
+                    images.append(img)
+                else:
+                    print(f"Warning: Image {image_path} does not exist.")
+                    exit()
+            images_np = np.stack([
+                np.array(img.convert("RGB")).astype(np.float32) / 255.0 for img in images
+            ])
+        else:
+            images_np = np.stack([
+                np.array(img.convert("RGB")).astype(np.float32) / 255.0 for img in images
+            ])
         prompts = [config.prompt] * len(images)
 
         clip_score_value = calculate_clip_score(images_np, prompts)
@@ -312,9 +341,6 @@ def main(args):
 
         # For CDS, gather original and edited inputs
         # Here we assume the original input image and prompt are reused
-
-        from torchvision.transforms import functional as TF
-        from PIL import Image
 
         def tensor_to_pil(tensor_img):
             tensor_img = (tensor_img + 1.0) * 127.5  # [-1, 1] to [0, 255]
@@ -344,6 +370,7 @@ if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
     argparser.add_argument("--config_file", type=str, default="configs/config_default.json",)
     argparser.add_argument("--metric", action="store_true", help="Calculate metrics like CLIP Score and CDS.")
+    argparser.add_argument("--metric_only", action="store_true", help="Only calculate metrics without running the model.")
     args = argparser.parse_args()
     
     main(args)
