@@ -258,12 +258,13 @@ def main(args):
     
     if not args.metric_only:
         # check if image is already generated
-        for seed in config.seeds:
-            label = "standard" if config.run_standard_sd else "tome"
-            image_path = config.output_path / config.prompt / f"{seed}_{label}.png"
-            if image_path.exists():
-                print(f"Image already exists: {image_path}")
-                exit()
+        if not args.rerun:
+            for seed in config.seeds:
+                label = "standard" if config.run_standard_sd else "tome"
+                image_path = config.output_path / config.prompt / f"{seed}_{label}.png"
+                if image_path.exists():
+                    print(f"Image already exists: {image_path}")
+                    exit()
         
         for seed in config.seeds:
             print(f"Seed: {seed}")
@@ -371,6 +372,7 @@ if __name__ == "__main__":
     argparser.add_argument("--config_file", type=str, default="configs/config_default.json",)
     argparser.add_argument("--metric", action="store_true", help="Calculate metrics like CLIP Score and CDS.")
     argparser.add_argument("--metric_only", action="store_true", help="Only calculate metrics without running the model.")
+    argparser.add_argument("--rerun", action="store_true", help="Rerun the model even if images already exist.")
     args = argparser.parse_args()
     
     main(args)
