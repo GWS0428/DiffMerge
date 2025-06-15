@@ -22,7 +22,7 @@ for i, image in enumerate(ds['val']['original_image']):
         
         # create a config file for each image
         config = defualt_config.copy()
-        config['image_path'] = f"datasets/tedbench/image_{i:03}.png"
+        config['img_path'] = f"datasets/tedbench/image_{i:03}.png"
         config['prompt'] = ds['val']['caption'][i].rstrip('.')
         config['token_indices'] = []
         config['prompt_anchor'] = []
