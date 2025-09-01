@@ -19,80 +19,10 @@ from torchvision.io import read_image
 
 import warnings
 
-# from Freeprompt.freeprompt import SelfAttentionControlEdit
 from utils.freeprompt_utils import SelfAttentionControlEdit
-# from Freeprompt.freeprompt_utils import register_attention_control_new
 from utils.attn_processor import register_attention_control_combined, CombinedAttentionProcessor
-from src.eunms import Model_Type, Scheduler_Type
-from src.utils.enums_utils import get_pipes, model_type_to_size, is_stochastic
-from src.config import RunConfig
-
-from ReNoise_main import run as invert
 
 warnings.filterwarnings("ignore", category=UserWarning)
-
-
-def get_dummy_inversion_output(
-    model_type: Model_Type = Model_Type.SDXL,
-    scheduler_type: Scheduler_Type = Scheduler_Type.DDIM, 
-    num_inversion_steps: int = 50,
-    batch_size: int = 1,
-    do_reconstruction_dummy: bool = False, # If True, 'img' will be a dummy PIL image
-    seed: int = 42, 
-    device: str = "cuda" if torch.cuda.is_available() else "cpu",
-    dtype: torch.dtype = torch.float16 
-):
-    """
-    Generates a dummy output tuple similar to what ReNoise's `run` function returns.
-    (img, inv_latent, noise, all_latents)
-    """
-    generator = torch.Generator(device=device).manual_seed(seed)
-
-    # 1. Determine latent shape based on model_type
-    original_image_size = model_type_to_size(model_type) # e.g., (1024, 1024) for SDXL
-    vae_scale_factor = 8 # Standard for Stable Diffusion models
-    latent_height = original_image_size[0] // vae_scale_factor
-    latent_width = original_image_size[1] // vae_scale_factor
-    latent_channels = 4 # Standard for Stable Diffusion VAE
-
-    latent_shape = (batch_size, latent_channels, latent_height, latent_width)
-
-    # 2. Create dummy 'inv_latent' (final inverted latent z_T)
-    inv_latent = torch.randn(latent_shape, generator=generator, device=device, dtype=dtype)
-
-    # 3. Create dummy 'all_latents' (list of latents from z_0 to z_T)
-    # Length will be num_inversion_steps + 1
-    all_latents = []
-    # Dummy z_0 (initial image latent)
-    z_0_dummy = torch.randn(latent_shape, generator=generator, device=device, dtype=dtype)
-    all_latents.append(z_0_dummy)
-
-    # Dummy intermediate latents (z_1 to z_T-1)
-    for _ in range(num_inversion_steps -1): # -1 because z_0 is done, z_T will be inv_latent
-        all_latents.append(torch.randn(latent_shape, generator=generator, device=device, dtype=dtype))
-    all_latents.append(inv_latent.clone()) 
-
-    assert len(all_latents) == num_inversion_steps + 1
-    assert torch.equal(all_latents[-1], inv_latent)
-
-    # 4. Create dummy 'noise' list (if scheduler is stochastic)
-    # Length will be num_inversion_steps
-    noise_list = None
-    if is_stochastic(scheduler_type):
-        noise_list = []
-        for _ in range(num_inversion_steps):
-            noise_list.append(torch.randn(latent_shape, generator=generator, device=device, dtype=dtype))
-    else: 
-        noise_list = None 
-
-    # 5. Create dummy 'img' (reconstructed image)
-    img = None
-    if do_reconstruction_dummy:
-        # Create a dummy PIL image
-        dummy_pil_image_data = (torch.randn(original_image_size[0], original_image_size[1], 3, generator=generator) * 127.5 + 127.5).byte().cpu().numpy()
-        img = Image.fromarray(dummy_pil_image_data, mode="RGB")
-
-    return img, inv_latent, noise_list, all_latents
 
 
 def read_prompt(path):
